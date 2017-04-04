@@ -67,6 +67,7 @@ import std.format;
 import std.stdio;
 import std.variant;
 import std.json;
+import std.file;
 
 import graphite.utils.json;
 
@@ -314,7 +315,7 @@ unittest {
     assert(b.logs[1].func == __PRETTY_FUNCTION__);
     assert(b.logs[1].msg[0] == "124 is 124?");
 
-    logger.writeln!"notice"(124, " is " "124", "?"); instLine = __LINE__;
+    logger.writeln!"notice"(124, " is " ~ "124", "?"); instLine = __LINE__;
     assert(b.logs[2].level == Level.notice);
     assert(b.logs[2].id == __MODULE__);
     assert(b.logs[2].file == __FILE__);
@@ -505,7 +506,7 @@ struct LogFormat
 
         app = appender!string();
         readable(app, LogElement!(string, int)(Level.verbose, "ID", "FILE", 123123, "FUNC", "FOOBAR", 323232));
-        assert(app.data == `[verbose] @ID[FILE(123123) in FUNC]: {FOOBAR, 323232}`"\n");
+        assert(app.data == "[verbose] @ID[FILE(123123) in FUNC]: {FOOBAR, 323232}\n");
     }
 
 

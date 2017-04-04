@@ -334,7 +334,7 @@ if(isInputRange!Rss && isSomeString!(typeof(param.front[0])) && isSomeString!(ty
                       value = e[1];
 
             app.formattedWrite("--%s\r\n", boundary);
-            app.formattedWrite(`Content-Disposition: form-data; name="%s"`"\r\n", key);
+            app.formattedWrite("Content-Disposition: form-data; name=\"%s\"\r\n", key);
             app.formattedWrite("\r\n");
             app.formattedWrite("%s\r\n", value);
         }
@@ -344,7 +344,7 @@ if(isInputRange!Rss && isSomeString!(typeof(param.front[0])) && isSomeString!(ty
         foreach(e; filenames){
             bin.put(cast(const(ubyte)[])format("--%s\r\n", boundary));
             bin.put(cast(const(ubyte)[])format("Content-Type: application/octet-stream\r\n"));
-            bin.put(cast(const(ubyte)[])format(`Content-Disposition: form-data; name="%s"; filename="%s"`"\r\n", endPoint, e.baseName));
+            bin.put(cast(const(ubyte)[])format("Content-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n", endPoint, e.baseName));
             bin.put(cast(const(ubyte[]))"\r\n");
             bin.put(cast(const(ubyte)[])std.file.read(e));
             bin.put(cast(const(ubyte[]))"\r\n");

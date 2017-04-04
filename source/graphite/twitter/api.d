@@ -786,8 +786,10 @@ struct Twitter
         */
         auto updateWithMedia(X)(in AccessToken token, string filePath, X param)
         {
-            string[1] filenames = [filePath];
-            return signedPostImage(token, `https://api.twitter.com/1.1/statuses/update_with_media.json`, "media[]", filenames, param);
+            string uploadResponse = Twitter.media.upload(token, filePath);
+            string mediaId = parseJSON(uploadResponse)["media_id_string"].str;
+            param["media_ids"] = mediaId;
+            return update(token, param);
         }
     }
 

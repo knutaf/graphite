@@ -268,7 +268,17 @@ if((is(Tok : ConsumerToken) || is(Tok : AccessToken))
     immutable option = format("%(%-(%s=%)&%)", optParams);
 
     auto http = HTTP();
-    http.verifyPeer(true);
+
+    if (Twitter.proxy is null)
+    {
+        http.verifyPeer(true);
+    }
+    else
+    {
+        http.verifyPeer(false);
+        http.proxy = Twitter.proxy;
+    }
+
     http.caInfo = `cacert.pem`;
     http.addRequestHeader("Authorization", authorize);
     return dlg(http, url, option);
@@ -609,6 +619,13 @@ void main()
 */
 struct Twitter
 {
+    enum MediaCategory
+    {
+        TweetImage,
+        TweetGif,
+        TweetVideo,
+    }
+
     /**
     各APIを叩くためのメソッドです
     */
@@ -634,6 +651,8 @@ struct Twitter
     {
         return signedPostImage(_token, url, endPoint, filenames, args);
     }
+
+    static string proxy = null;
 
 
   private:
@@ -784,10 +803,9 @@ struct Twitter
         }
         ------------------------
         */
-        auto updateWithMedia(X)(in AccessToken token, string filePath, X param)
+        auto updateWithMedia(X)(in AccessToken token, string filePath, string mimeType, MediaCategory category, X param)
         {
-            string uploadResponse = Twitter.media.upload(token, filePath);
-            string mediaId = parseJSON(uploadResponse)["media_id_string"].str;
+            string mediaId = Twitter.media.upload(token, filePath, mimeType, category);
             param["media_ids"] = mediaId;
             return update(token, param);
         }
@@ -797,25 +815,71 @@ struct Twitter
     struct media
     {
       static:
-        /**
-        画像をuploadします
-
-        Example:
-        -------------------------
-        import std.json;
-
-        // 画像をuploadして、画像のidを取得する
-        string uploadImage(Twitter tw, string imgFilePath)
+        string upload(in AccessToken token, string filePath, string mimeType, MediaCategory category)
         {
-            return parseJSON(tw.callAPI!"media.upload"(imgFilePath))["media_id_string"].str;
-        }
-        -------------------------
-        */
-        string upload(in AccessToken token, string filePath)
-        {
-            immutable url = `https://upload.twitter.com/1.1/media/upload.json`;
+            immutable string url = `https://upload.twitter.com/1.1/media/upload.json`;
+
+            string[string] initParams;
+            initParams[`command`] = `INIT`;
+            initParams[`media_type`] = mimeType;
+
+            final switch (category)
+            {
+                case MediaCategory.TweetImage:
+                {
+                    initParams[`media_category`] = `tweet_image`;
+                }
+                break;
+
+                case MediaCategory.TweetGif:
+                {
+                    initParams[`media_category`] = `tweet_gif`;
+                }
+                break;
+
+                case MediaCategory.TweetVideo:
+                {
+                    initParams[`media_category`] = `tweet_video`;
+                }
+                break;
+            }
+
+            initParams[`total_bytes`] = format("%u", std.file.getSize(filePath));
+            JSONValue initResponse = parseJSON(signedPost(token, url, initParams));
+            string mediaId = initResponse["media_id_string"].str;
+
+            string[string] appendParams;
+            appendParams[`command`] = `APPEND`;
+            appendParams[`media_id`] = mediaId;
+            appendParams[`segment_index`] = `0`;
+
             string[1] filenames = [filePath];
-            return signedPostImage(token, url, "media", filenames, null);
+            signedPostImage(token, url, "media", filenames, appendParams);
+
+            string[string] finalizeParams;
+            finalizeParams[`command`] = `FINALIZE`;
+            finalizeParams[`media_id`] = mediaId;
+            JSONValue statusResponse = parseJSON(signedPost(token, url, finalizeParams));
+
+            try
+            {
+                // Move on to checking status of upload
+                finalizeParams[`command`] = `STATUS`;
+                JSONValue processingInfo = statusResponse[`processing_info`];
+                while (!processingInfo.isNull && processingInfo[`state`].str == `pending`)
+                {
+                    long checkTimeInSeconds = processingInfo[`check_after_secs`].integer;
+                    core.thread.Thread.sleep(dur!`seconds`(checkTimeInSeconds));
+
+                    statusResponse = parseJSON(signedGet(token, url, finalizeParams));
+                    processingInfo = statusResponse[`processing_info`];
+                }
+            }
+            catch (Exception ex)
+            {
+            }
+
+            return mediaId;
         }
     }
 

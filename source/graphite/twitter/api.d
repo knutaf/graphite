@@ -45,6 +45,7 @@ import std.datetime;
 import std.digest.sha;
 import std.exception;
 import std.file;
+import std.stdio;
 import std.format;
 import std.json;
 import std.path;
@@ -328,11 +329,11 @@ if((is(Tok : ConsumerToken) || is(Tok : AccessToken))
 }
 
 
-string signedPostImage(Rss)(in AccessToken token, string url, string endPoint, in string[] filenames, Rss param)
+string signedPostImage(Rss)(in AccessToken token, string url, string endPoint, in ubyte[] fileData, Rss param)
 if(isInputRange!Rss && isSomeString!(typeof(param.front[0])) && isSomeString!(typeof(param.front[1])))
 {
   static if(isURLEncoded!Rss)
-    return signedPostImage(token, url, filename, param.map!(nupler2!decodeComponent));
+    return signedPostImage(token, url, fileData, param.map!(nupler2!decodeComponent));
   else{
     return signedCall(token, "POST", url, (string[string]).init, delegate(HTTP http, string url, string /*option*/){
         immutable boundary = `cce6735153bf14e47e999e68bb183e70a1fa7fc89722fc1efdf03a917340`;   // 適当な文字列
@@ -351,14 +352,12 @@ if(isInputRange!Rss && isSomeString!(typeof(param.front[0])) && isSomeString!(ty
 
 
         auto bin = appender!(const(ubyte)[])(cast(const(ubyte[]))app.data);
-        foreach(e; filenames){
-            bin.put(cast(const(ubyte)[])format("--%s\r\n", boundary));
-            bin.put(cast(const(ubyte)[])format("Content-Type: application/octet-stream\r\n"));
-            bin.put(cast(const(ubyte)[])format("Content-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n", endPoint, e.baseName));
-            bin.put(cast(const(ubyte[]))"\r\n");
-            bin.put(cast(const(ubyte)[])std.file.read(e));
-            bin.put(cast(const(ubyte[]))"\r\n");
-        }
+        bin.put(cast(const(ubyte)[])format("--%s\r\n", boundary));
+        bin.put(cast(const(ubyte)[])format("Content-Type: application/octet-stream\r\n"));
+        bin.put(cast(const(ubyte)[])format("Content-Disposition: form-data; name=\"%s\"; filename=\"file.bin\"\r\n", endPoint));
+        bin.put(cast(const(ubyte[]))"\r\n");
+        bin.put(fileData);
+        bin.put(cast(const(ubyte[]))"\r\n");
         bin.put(cast(const(ubyte)[])format("--%s--\r\n", boundary));
 
         return post(url, bin.data, http).idup;
@@ -367,15 +366,15 @@ if(isInputRange!Rss && isSomeString!(typeof(param.front[0])) && isSomeString!(ty
 }
 
 
-string signedPostImage(AAss)(in AccessToken token, string url, string endPoint, in string[] filenames, in AAss param)
+string signedPostImage(AAss)(in AccessToken token, string url, string endPoint, in ubyte[] fileData, in AAss param)
 if(is(AAss : const(string[string])) || is(AAss == typeof(null)))
 {
   static if(is(AAss == typeof(null)))
-    return signedPostImage(token, url, endPoint, filenames, (string[string]).init.asRange);
+    return signedPostImage(token, url, endPoint, fileData, (string[string]).init.asRange);
   else static if(isURLEncoded!AAss)
-    return signedPostImage(token, url, endPoint, filenames, param.dup.asRange.map!(nupler2!decodeComponent));
+    return signedPostImage(token, url, endPoint, fileData, param.dup.asRange.map!(nupler2!decodeComponent));
   else
-    return signedPostImage(token, url, endPoint, filenames, param.dup.asRange);
+    return signedPostImage(token, url, endPoint, fileData, param.dup.asRange);
 }
 
 
@@ -647,9 +646,10 @@ struct Twitter
     }
 
 
-    auto postImage(X)(string url, string endPoint, in string[] filenames, X param) const
+    auto postImage(X)(string url, string endPoint, in string filename, X param) const
     {
-        return signedPostImage(_token, url, endPoint, filenames, args);
+        ubyte[] fileData = std.file.read(filename);
+        return signedPostImage(_token, url, endPoint, fileData, args);
     }
 
     static string proxy = null;
@@ -817,6 +817,10 @@ struct Twitter
       static:
         string upload(in AccessToken token, string filePath, string mimeType, MediaCategory category)
         {
+            // Twitter requires each segment to be max 5 MB.
+            immutable uint SEGMENT_LIMIT_IN_BYTES = 5000000;
+            immutable uint SEGMENT_SIZE_IN_BYTES = 1000000;
+            static assert(SEGMENT_SIZE_IN_BYTES <= SEGMENT_LIMIT_IN_BYTES);
             immutable string url = `https://upload.twitter.com/1.1/media/upload.json`;
 
             string[string] initParams;
@@ -848,13 +852,20 @@ struct Twitter
             JSONValue initResponse = parseJSON(signedPost(token, url, initParams));
             string mediaId = initResponse["media_id_string"].str;
 
-            string[string] appendParams;
-            appendParams[`command`] = `APPEND`;
-            appendParams[`media_id`] = mediaId;
-            appendParams[`segment_index`] = `0`;
+            {
+                string[string] appendParams;
+                appendParams[`command`] = `APPEND`;
+                appendParams[`media_id`] = mediaId;
 
-            string[1] filenames = [filePath];
-            signedPostImage(token, url, "media", filenames, appendParams);
+                uint segmentIndex = 0;
+                File inputFile = File(filePath, `rb`);
+                foreach (const ubyte[] chunk; inputFile.byChunk(SEGMENT_SIZE_IN_BYTES))
+                {
+                    appendParams[`segment_index`] = format(`%u`, segmentIndex);
+                    signedPostImage(token, url, "media", chunk, appendParams);
+                    segmentIndex++;
+                }
+            }
 
             string[string] finalizeParams;
             finalizeParams[`command`] = `FINALIZE`;

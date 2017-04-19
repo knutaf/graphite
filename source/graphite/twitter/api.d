@@ -872,22 +872,16 @@ struct Twitter
             finalizeParams[`media_id`] = mediaId;
             JSONValue statusResponse = parseJSON(signedPost(token, url, finalizeParams));
 
-            try
+            // Move on to checking status of upload
+            finalizeParams[`command`] = `STATUS`;
+            const(JSONValue)* processingInfo = `processing_info` in statusResponse.object;
+            while ((processingInfo !is null) && (processingInfo.object[`state`].str == `pending`))
             {
-                // Move on to checking status of upload
-                finalizeParams[`command`] = `STATUS`;
-                JSONValue processingInfo = statusResponse[`processing_info`];
-                while (!processingInfo.isNull && processingInfo[`state`].str == `pending`)
-                {
-                    long checkTimeInSeconds = processingInfo[`check_after_secs`].integer;
-                    core.thread.Thread.sleep(dur!`seconds`(checkTimeInSeconds));
+                long checkTimeInSeconds = processingInfo.object[`check_after_secs`].integer;
+                core.thread.Thread.sleep(dur!`seconds`(checkTimeInSeconds));
 
-                    statusResponse = parseJSON(signedGet(token, url, finalizeParams));
-                    processingInfo = statusResponse[`processing_info`];
-                }
-            }
-            catch (Exception ex)
-            {
+                statusResponse = parseJSON(signedGet(token, url, finalizeParams));
+                processingInfo = `processing_info` in statusResponse;
             }
 
             return mediaId;
